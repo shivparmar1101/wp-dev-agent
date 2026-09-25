@@ -136,7 +136,7 @@ class SearchService:
         return index.lexical  # type: ignore[return-value]
 
     def get_index(self, owner: str, repo: str) -> RepositoryIndex | None:
-        return self.registry.get(owner, repo)
+        return self.registry.get_or_load(owner, repo)
 
     async def search(
         self,
@@ -147,7 +147,7 @@ class SearchService:
         mode: str | SearchMode = SearchMode.hybrid,
         limit: int = 10,
     ) -> SearchResponse:
-        index = self.registry.get(owner, repo)
+        index = self.registry.get_or_load(owner, repo)
         if index is None:
             raise LookupError("repository_index_missing")
         started = time.perf_counter()

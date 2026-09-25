@@ -71,8 +71,13 @@ class ThemeDetector:
             if not path.endswith("style.css"):
                 continue
             if "/" not in path:
-                # style.css at repository root of a standalone theme repo
-                candidates["."] = path
+                # `style.css` at the repository root of a standalone theme repo.
+                # Require the mandatory WordPress `Theme Name` header — otherwise
+                # every plain HTML/CSS site (whose root stylesheet has no theme
+                # headers) would be misreported as a theme.
+                root_headers = parse_wp_headers(contents.get(path, ""), keys=_THEME_KEYS)
+                if "theme name" in root_headers:
+                    candidates["."] = path
                 continue
             parent = path[: -len("/style.css")]
             match = _THEME_PATH_RE.search(parent)

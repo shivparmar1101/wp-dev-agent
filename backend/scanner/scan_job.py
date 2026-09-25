@@ -120,7 +120,7 @@ class ScanJobRunner:
             return self._summaries[scan_id]
         summary = self.project_store.get(owner, repo)
         if summary is not None:
-            index = self.registry.get(owner, repo)
+            index = self.registry.get_or_load(owner, repo)
             if index is not None:
                 summary = summary.model_copy(update={"index": index.stats})
         return summary
@@ -255,6 +255,9 @@ class ScanJobRunner:
                         stage.detail = "Complete"
 
             self.registry.put(index)
+            # Persist so search / file tree / chat keep working after a restart
+            # or after the in-memory LRU entry is evicted.
+            self.registry.save(index)
 
             # Summary
             detector = ProjectDetector()

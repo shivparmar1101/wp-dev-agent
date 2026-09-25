@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Awaitable, Callable
 
 from backend.config import Settings, get_settings
@@ -63,10 +64,16 @@ class RepositoryIndex:
 
 
 class IndexRegistry:
-    """LRU registry of in-memory repository indexes (one process)."""
+    """LRU registry of repository indexes, backed by on-disk persistence.
 
-    def __init__(self, max_entries: int = 5):
+    Memory holds at most `max_entries` indexes; anything evicted (or lost to a
+    process restart) is reloaded transparently from the persisted copy on the
+    next `get_or_load` call.
+    """
+
+    def __init__(self, max_entries: int = 5, storage_dir: Path | None = None):
         self.max_entries = max_entries
+        self.storage_dir = storage_dir
         self._entries: OrderedDict[tuple[str, str], RepositoryIndex] = OrderedDict()
 
     def get(self, owner: str, repo: str) -> RepositoryIndex | None:
@@ -76,6 +83,18 @@ class IndexRegistry:
             self._entries.move_to_end(key)
         return entry
 
+    def get_or_load(self, owner: str, repo: str) -> RepositoryIndex | None:
+        """Return the in-memory index, hydrating it from disk when needed."""
+        entry = self.get(owner, repo)
+        if entry is not None:
+            return entry
+        from . import persistence
+
+        entry = persistence.load(owner, repo, self.storage_dir)
+        if entry is not None:
+            self.put(entry)
+        return entry
+
     def put(self, index: RepositoryIndex) -> None:
         key = (index.owner.lower(), index.repo.lower())
         self._entries[key] = index
@@ -83,6 +102,12 @@ class IndexRegistry:
         while len(self._entries) > self.max_entries:
             evicted_key, evicted = self._entries.popitem(last=False)
             logger.info("Evicted index for %s/%s", *evicted_key)
+
+    def save(self, index: RepositoryIndex) -> bool:
+        """Persist `index` so it survives eviction and process restarts."""
+        from . import persistence
+
+        return persistence.save(index, self.storage_dir)
 
     def remove(self, owner: str, repo: str) -> None:
         self._entries.pop((owner.lower(), repo.lower()), None)

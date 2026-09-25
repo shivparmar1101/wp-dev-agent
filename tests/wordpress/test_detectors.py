@@ -54,6 +54,30 @@ def test_no_themes_outside_wordpress():
     assert detector.detect(paths=["src/style.css", "assets/main.css"], dirs=["src"]) == []
 
 
+def test_root_style_css_with_theme_header_is_a_standalone_theme():
+    """A theme repository keeps its style.css at the root."""
+    detector = ThemeDetector()
+    themes = detector.detect(
+        paths=["style.css", "functions.php"],
+        dirs=[],
+        contents={"style.css": "/*\nTheme Name: Solo Theme\nVersion: 2.0\n*/"},
+    )
+    assert len(themes) == 1
+    assert themes[0].name == "Solo Theme"
+    assert themes[0].location == "./"
+
+
+def test_root_style_css_without_theme_header_is_not_a_theme():
+    """Plain HTML/CSS sites have a root stylesheet with no WP theme headers."""
+    detector = ThemeDetector()
+    themes = detector.detect(
+        paths=["style.css", "index.html"],
+        dirs=[],
+        contents={"style.css": ":root { --brand: #111; }\nbody { margin: 0; }\n"},
+    )
+    assert themes == []
+
+
 def test_detects_plugins_with_headers(wp_scan, wp_files):
     detector = PluginDetector()
     contents = {

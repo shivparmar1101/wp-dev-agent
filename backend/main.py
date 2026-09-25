@@ -24,13 +24,26 @@ VERSION = "0.1.0"
 
 def _build_provider(settings) -> AIProvider:
     try:
-        return create_provider(settings)
+        provider = create_provider(settings)
     except AIError as exc:
         logger.warning("AI provider unavailable (%s); falling back to mock mode.", exc.message)
         return MockProvider(settings)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Could not create AI provider (%s); using mock mode.", exc)
         return MockProvider(settings)
+
+    # `create_provider` returns a usable instance even when the API key is
+    # missing (e.g. AI_PROVIDER=openai without AI_API_KEY). Without this guard
+    # the chat endpoint rejects every request with 503 instead of degrading to
+    # the documented retrieval-only mode.
+    if not provider.configured:
+        logger.warning(
+            "AI provider '%s' is not configured (AI_API_KEY missing); "
+            "falling back to mock mode for retrieval-only answers.",
+            provider.name,
+        )
+        return MockProvider(settings)
+    return provider
 
 
 @asynccontextmanager
@@ -105,7 +118,10 @@ def create_app() -> FastAPI:
             "version": VERSION,
             "github_configured": current.github_configured,
             "ai_provider": provider.name if provider else current.ai_provider,
-            "ai_configured": bool(provider and provider.configured),
+            # Reflects whether a *real* AI backend is configured (settings), not
+            # whether the possibly-fallback provider object is usable — so the UI
+            # can still warn while running in retrieval-only mock mode.
+            "ai_configured": current.ai_configured,
             "environment": current.environment,
         }
 

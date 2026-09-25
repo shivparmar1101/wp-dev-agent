@@ -27,7 +27,7 @@ async def get_project(owner: str, repo: str, session: SessionDep) -> ProjectSumm
             status_code=404,
             detail="This repository has not been analyzed yet. Start an analysis first.",
         )
-    index = index_registry.get(owner, repo)
+    index = index_registry.get_or_load(owner, repo)
     if index is not None:
         summary = summary.model_copy(update={"index": index.stats})
     return summary
@@ -35,7 +35,7 @@ async def get_project(owner: str, repo: str, session: SessionDep) -> ProjectSumm
 
 @router.get("/{owner}/{repo}/tree", response_model=FileNode)
 async def get_tree(owner: str, repo: str, session: SessionDep) -> FileNode:
-    index = index_registry.get(owner, repo)
+    index = index_registry.get_or_load(owner, repo)
     if index is None:
         raise HTTPException(
             status_code=409,

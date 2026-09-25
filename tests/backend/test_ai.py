@@ -17,9 +17,37 @@ from backend.ai.prompts import (
 )
 from backend.indexing.indexer import RepositoryIndexer
 from backend.indexing.search import SearchService
+from backend.main import _build_provider
 from backend.models.analysis import ChatMessage
 from backend.models.project import ProjectSummary
 from backend.utils.helpers import utcnow
+
+
+def test_build_provider_falls_back_to_mock_when_ai_key_missing(settings):
+    """AI_PROVIDER=openai without AI_API_KEY must degrade to retrieval-only mode
+    instead of making every chat request fail with 503."""
+    unconfigured = settings.model_copy(update={"ai_provider": "openai", "ai_api_key": ""})
+
+    provider = _build_provider(unconfigured)
+
+    assert provider.name == "mock"
+    assert provider.configured is True
+
+
+def test_build_provider_uses_real_provider_when_configured(settings):
+    configured = settings.model_copy(update={"ai_provider": "openai", "ai_api_key": "sk-test"})
+
+    provider = _build_provider(configured)
+
+    assert provider.name == "openai"
+    assert provider.configured is True
+
+
+def test_build_provider_keeps_explicit_mock(settings):
+    provider = _build_provider(settings)
+
+    assert provider.name == "mock"
+    assert provider.configured is True
 
 
 def test_extract_json_plain_and_fenced():
