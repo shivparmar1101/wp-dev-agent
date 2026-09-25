@@ -49,6 +49,15 @@ class AIRateLimitError(AIError):
         return "The AI provider is rate limiting requests. Please wait and try again."
 
 
+class AIServerError(AIError):
+    """The provider answered 5xx / overload after retries were exhausted."""
+
+    kind = "ai_server_error"
+
+    def user_message(self) -> str:
+        return "The AI provider is temporarily unavailable. Please try again shortly."
+
+
 class AITimeoutError(AIError):
     kind = "ai_timeout"
 

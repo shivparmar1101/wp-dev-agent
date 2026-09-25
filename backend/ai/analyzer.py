@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from typing import Sequence
@@ -26,7 +27,14 @@ from .prompts import (
     parse_plan,
     project_summary_text,
 )
-from .provider import AIError, AIProvider, AIMessage
+from .provider import (
+    AIError,
+    AIProvider,
+    AIMessage,
+    AIRateLimitError,
+    AIServerError,
+    AITimeoutError,
+)
 
 logger = get_logger(__name__)
 
@@ -196,7 +204,28 @@ class RepositoryAnalyzer:
             AIMessage(role="user", content=user_message),
         ]
 
-        result = await self.provider.complete(messages)
+        try:
+            result = await self.provider.complete(messages)
+        except (AIRateLimitError, AITimeoutError, AIServerError) as exc:
+            # Quota or upstream overload: retrieval above already succeeded, so
+            # answer with those results instead of failing the whole request.
+            logger.warning(
+                "AI analysis unavailable (%s); answering with retrieval only.",
+                exc.message,
+            )
+            notes.append(exc.user_message())
+            return self._to_response(
+                json.dumps(self._degraded_payload(question, exc)),
+                question=question,
+                index_files=set(index.files.keys()),
+                index=index,
+                search_hits=selected,
+                notes=notes,
+                plan=plan,
+                provider_name=self.provider.name,
+                model=getattr(self.provider, "model", None) or self.provider.name,
+            )
+
         analysis = self._to_response(
             result.text,
             question=question,
@@ -209,6 +238,33 @@ class RepositoryAnalyzer:
             model=result.model,
         )
         return analysis
+
+    # -- graceful degradation ----------------------------------------------
+    @staticmethod
+    def _degraded_payload(question: str, exc: AIError) -> dict:
+        """Structured answer used when the model itself is unavailable.
+
+        Retrieval already succeeded at this point, so the caller still sees the
+        relevant files; only model reasoning is missing.
+        """
+        detail = f" {exc.detail}" if exc.detail else ""
+        return {
+            "issue": question[:400] or "Repository question received.",
+            "relevant_files": [],
+            "cause": (exc.user_message() + detail)[:600],
+            "suggested_solution": (
+                "The AI provider is temporarily unavailable, so this answer only "
+                "contains the files retrieved from the repository index. Retry in "
+                "a moment to get a full model analysis."
+            ),
+            "solution_language": None,
+            "confidence": "Unknown",
+            "explanation": (
+                "Model reasoning was skipped because the AI provider did not "
+                "answer. Search, file context gathering and secret redaction all "
+                "ran normally against the repository index."
+            ),
+        }
 
     # -- response handling -------------------------------------------------
     def _find_chunk(self, chunks, hit: SearchHit):

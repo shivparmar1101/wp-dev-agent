@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 
 from backend.ai.analyzer import RepositoryAnalyzer
-from backend.ai.client import MockProvider
+from backend.ai.client import MockProvider, _send_with_retries
 from backend.ai.prompts import (
     build_context_blocks,
     build_user_message,
@@ -15,6 +16,7 @@ from backend.ai.prompts import (
     project_summary_text,
     strip_untrusted,
 )
+from backend.ai.provider import AIError, AIRateLimitError
 from backend.indexing.indexer import RepositoryIndexer
 from backend.indexing.search import SearchService
 from backend.main import _build_provider
@@ -198,3 +200,109 @@ async def test_analyzer_flags_prompt_injection_content(settings, scan_factory, r
     assert "ghp_" not in response.raw.lower()
     assert all(ref.file_path in index.files for ref in response.relevant_files)
     assert response.issue
+
+
+# -- retry behaviour --------------------------------------------------------
+
+
+def _response(status: int) -> httpx.Response:
+    return httpx.Response(status, request=httpx.Request("POST", "http://test"))
+
+
+async def test_send_with_retries_recovers_from_transient_status(monkeypatch):
+    from backend.ai import client
+
+    monkeypatch.setattr(client, "_RETRY_BASE_DELAY_SECONDS", 0)
+    statuses = iter([503, 200])
+    calls = []
+
+    async def send():
+        calls.append(1)
+        return _response(next(statuses))
+
+    response = await _send_with_retries(send, attempts=3)
+
+    assert response.status_code == 200
+    assert len(calls) == 2
+
+
+async def test_send_with_retries_does_not_retry_client_errors(monkeypatch):
+    from backend.ai import client
+
+    monkeypatch.setattr(client, "_RETRY_BASE_DELAY_SECONDS", 0)
+    calls = []
+
+    async def send():
+        calls.append(1)
+        return _response(404)
+
+    response = await _send_with_retries(send, attempts=3)
+
+    assert response.status_code == 404
+    assert len(calls) == 1
+
+
+async def test_send_with_retries_gives_up_after_attempts(monkeypatch):
+    from backend.ai import client
+
+    monkeypatch.setattr(client, "_RETRY_BASE_DELAY_SECONDS", 0)
+    calls = []
+
+    async def send():
+        calls.append(1)
+        return _response(503)
+
+    response = await _send_with_retries(send, attempts=3)
+
+    assert response.status_code == 503
+    assert len(calls) == 3
+
+
+# -- graceful degradation when the model is unavailable ----------------------
+
+
+class QuotaExceededProvider(MockProvider):
+    async def complete(self, messages, *, temperature=None, max_tokens=None):
+        raise AIRateLimitError(
+            "The AI provider rate limit was reached.", detail="quota exceeded"
+        )
+
+
+async def test_analyzer_degrades_to_retrieval_when_provider_is_down(
+    settings, wp_scan, dict_reader, registry_clean
+):
+    index = await RepositoryIndexer(dict_reader.read, settings).build(wp_scan)
+    registry_clean.put(index)
+    service = SearchService(registry=registry_clean)
+    analyzer = RepositoryAnalyzer(service, QuotaExceededProvider(settings), settings)
+
+    response = await analyzer.answer(
+        "acme", "client-wordpress-site", "Why is my mobile header overflowing?"
+    )
+
+    assert response.relevant_files
+    for ref in response.relevant_files:
+        assert ref.file_path in index.files
+    assert response.confidence == "Unknown"
+    assert any("rate limiting" in warning.lower() for warning in response.warnings)
+    assert "Retry in a moment" in response.suggested_solution
+    assert response.files_consulted
+
+
+class MisconfiguredProvider(MockProvider):
+    async def complete(self, messages, *, temperature=None, max_tokens=None):
+        raise AIError(
+            "The AI provider rejected the request. Check AI_MODEL and AI_BASE_URL."
+        )
+
+
+async def test_analyzer_still_raises_on_configuration_errors(
+    settings, wp_scan, dict_reader, registry_clean
+):
+    index = await RepositoryIndexer(dict_reader.read, settings).build(wp_scan)
+    registry_clean.put(index)
+    service = SearchService(registry=registry_clean)
+    analyzer = RepositoryAnalyzer(service, MisconfiguredProvider(settings), settings)
+
+    with pytest.raises(AIError, match="Check AI_MODEL"):
+        await analyzer.answer("acme", "client-wordpress-site", "why is the header broken")

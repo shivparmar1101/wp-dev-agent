@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -15,11 +17,44 @@ from .provider import (
     AIResult,
     AIMessage,
     AIRateLimitError,
+    AIServerError,
     AITimeoutError,
     AIUnavailableError,
 )
 
 logger = get_logger(__name__)
+
+# 429/5xx are usually transient overload (Google reports 503 "high demand").
+_RETRYABLE_STATUS = {429, 500, 502, 503, 529}
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_DELAY_SECONDS = 1.5
+
+
+async def _send_with_retries(
+    send: Callable[[], Awaitable[httpx.Response]],
+    *,
+    attempts: int = _RETRY_ATTEMPTS,
+) -> httpx.Response:
+    """Send a request, retrying transient provider failures with backoff.
+
+    Without this a single upstream hiccup fails the whole chat request even
+    though the same call usually succeeds a second later.
+    """
+    response = await send()
+    for attempt in range(2, attempts + 1):
+        if response.status_code not in _RETRYABLE_STATUS:
+            break
+        delay = _RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 2))
+        logger.warning(
+            "AI provider returned HTTP %s; retrying in %.1fs (attempt %s/%s)",
+            response.status_code,
+            delay,
+            attempt,
+            attempts,
+        )
+        await asyncio.sleep(delay)
+        response = await send()
+    return response
 
 
 def _friendly_http_error(status: int, payload: Any) -> AIError:
@@ -44,7 +79,9 @@ def _friendly_http_error(status: int, payload: Any) -> AIError:
             detail=detail,
         )
     if status >= 500:
-        return AIError("The AI provider returned a server error. Try again shortly.", detail=detail)
+        return AIServerError(
+            "The AI provider returned a server error. Try again shortly.", detail=detail
+        )
     return AIError("The AI provider returned an unexpected error.", detail=detail)
 
 
@@ -114,7 +151,9 @@ class OpenAIProvider(AIProvider):
     async def _post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(timeout=self.settings.ai_timeout_seconds) as client:
-                response = await client.post(url, json=payload, headers=self._headers())
+                response = await _send_with_retries(
+                    lambda: client.post(url, json=payload, headers=self._headers())
+                )
         except httpx.TimeoutException as exc:
             raise AITimeoutError("The AI request timed out.") from exc
         except httpx.HTTPError as exc:
@@ -164,7 +203,9 @@ class AnthropicProvider(AIProvider):
         }
         try:
             async with httpx.AsyncClient(timeout=self.settings.ai_timeout_seconds) as client:
-                response = await client.post(self.api_url, json=payload, headers=headers)
+                response = await _send_with_retries(
+                    lambda: client.post(self.api_url, json=payload, headers=headers)
+                )
         except httpx.TimeoutException as exc:
             raise AITimeoutError("The AI request timed out.") from exc
         except httpx.HTTPError as exc:
@@ -233,7 +274,9 @@ class GeminiProvider(AIProvider):
         params = {"key": self.settings.ai_api_key}
         try:
             async with httpx.AsyncClient(timeout=self.settings.ai_timeout_seconds) as client:
-                response = await client.post(self.api_url, json=payload, params=params)
+                response = await _send_with_retries(
+                    lambda: client.post(self.api_url, json=payload, params=params)
+                )
         except httpx.TimeoutException as exc:
             raise AITimeoutError("The AI request timed out.") from exc
         except httpx.HTTPError as exc:

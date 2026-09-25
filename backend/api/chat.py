@@ -9,6 +9,7 @@ from backend.ai.provider import (
     AIAuthError,
     AIError,
     AIRateLimitError,
+    AIServerError,
     AITimeoutError,
     AIUnavailableError,
 )
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 def _status_for(exc: AIError) -> int:
     if isinstance(exc, AIRateLimitError):
         return 429
-    if isinstance(exc, AIAuthError):
+    if isinstance(exc, (AIAuthError, AIServerError)):
         return 502
     if isinstance(exc, AITimeoutError):
         return 504
