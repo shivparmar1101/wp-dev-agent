@@ -1,0 +1,193 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: theme("colors.ink.950");
+  color: #d7dde7;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(109, 139, 255, 0.35);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3444 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #2a3444;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-ink-700 bg-ink-850 shadow-panel;
+  }
+
+  .panel-subtle {
+    @apply rounded-lg border border-ink-700 bg-ink-900;
+  }
+
+  .nav-item {
+    @apply flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition;
+    color: #aab4c5;
+  }
+
+  .nav-item:hover {
+    @apply bg-ink-800 text-white;
+  }
+
+  .nav-item[data-active="true"] {
+    @apply bg-ink-800 font-medium text-white;
+    box-shadow: inset 2px 0 0 0 theme("colors.accent.DEFAULT");
+  }
+
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70;
+  }
+}
+
+/* Markdown rendering (AI answers) */
+.markdown {
+  line-height: 1.65;
+  font-size: 0.9rem;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  font-weight: 600;
+  color: #eef2f8;
+  margin: 1.1em 0 0.45em;
+}
+
+.markdown h1 {
+  font-size: 1.1rem;
+}
+.markdown h2 {
+  font-size: 1rem;
+}
+.markdown h3,
+.markdown h4 {
+  font-size: 0.92rem;
+}
+
+.markdown p {
+  margin: 0.6em 0;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0.6em 0;
+  padding-left: 1.3em;
+}
+
+.markdown ul {
+  list-style: disc;
+}
+.markdown ol {
+  list-style: decimal;
+}
+
+.markdown li {
+  margin: 0.2em 0;
+}
+
+.markdown a {
+  color: theme("colors.accent.soft");
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown code {
+  font-family: theme("fontFamily.mono");
+  font-size: 0.84em;
+  background: rgba(120, 140, 180, 0.14);
+  border: 1px solid rgba(120, 140, 180, 0.16);
+  border-radius: 5px;
+  padding: 0.08em 0.34em;
+}
+
+.markdown pre {
+  background: #0a0e15;
+  border: 1px solid theme("colors.ink.700");
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  margin: 0.7em 0;
+}
+
+.markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.markdown blockquote {
+  border-left: 3px solid theme("colors.accent.dim");
+  padding-left: 0.8em;
+  color: #9fabbd;
+  margin: 0.7em 0;
+}
+
+.markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.7em 0;
+  font-size: 0.85rem;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid theme("colors.ink.700");
+  padding: 0.4em 0.6em;
+  text-align: left;
+}
+
+.markdown hr {
+  border: none;
+  border-top: 1px solid theme("colors.ink.700");
+  margin: 1em 0;
+}
+
+/* Code blocks rendered outside markdown */
+.code-block pre {
+  background: #0a0e15 !important;
+  margin: 0;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  font-size: 0.79rem;
+  line-height: 1.6;
+}
+
+.code-block code {
+  font-family: theme("fontFamily.mono");
+  background: none;
+  white-space: pre;
+}
