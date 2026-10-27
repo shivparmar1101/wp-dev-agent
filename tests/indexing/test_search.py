@@ -70,6 +70,98 @@ async def test_hybrid_search_without_embeddings_uses_keyword(service):
     assert any("Semantic search is not configured" in note for note in response.notes)
 
 
+class FakeEmbeddings:
+    """Deterministic vectors so cosine ranking is stable across runs."""
+
+    async def embed(self, texts):
+        vectors = []
+        for text in texts:
+            vector = [0.0] * 8
+            vector[sum(ord(char) for char in text) % 8] = 1.0
+            vectors.append(vector)
+        return vectors
+
+
+class BrokenEmbeddings:
+    async def embed(self, texts):
+        return None
+
+
+async def test_hybrid_search_with_embeddings_is_ranked_semantically(
+    settings, wp_scan, dict_reader, registry_clean
+):
+    index = await RepositoryIndexer(dict_reader.read, settings).build(wp_scan)
+    registry_clean.put(index)
+    service = SearchService(registry=registry_clean, embeddings=FakeEmbeddings())
+
+    response = await service.search(
+        "acme", "client-wordpress-site", "where is the contact form email configured",
+        mode="hybrid", limit=5,
+    )
+
+    assert response.mode_used == "hybrid"
+    assert response.hits
+    assert not any("Semantic search is not configured" in note for note in response.notes)
+    assert not any("Embeddings request failed" in note for note in response.notes)
+
+
+async def test_hybrid_search_falls_back_when_embeddings_fail(
+    settings, wp_scan, dict_reader, registry_clean
+):
+    index = await RepositoryIndexer(dict_reader.read, settings).build(wp_scan)
+    registry_clean.put(index)
+    service = SearchService(registry=registry_clean, embeddings=BrokenEmbeddings())
+
+    response = await service.search(
+        "acme", "client-wordpress-site", "where is the contact form email configured",
+        mode="hybrid", limit=5,
+    )
+
+    assert response.hits
+    assert any("Embeddings request failed" in note for note in response.notes)
+
+
+async def test_semantic_rerank_resolves_match_subranges_to_chunks(
+    settings, wp_scan, dict_reader, registry_clean
+):
+    """Real keyword hits point at matched lines, not at chunk boundaries."""
+    from backend.models.analysis import SearchHit
+
+    index = await RepositoryIndexer(dict_reader.read, settings).build(wp_scan)
+    registry_clean.put(index)
+    chunk = max(index.chunks, key=lambda c: c.end_line - c.start_line)
+    assert chunk.end_line - chunk.start_line >= 3
+    hit = SearchHit(
+        file_path=chunk.file_path,
+        score=1.0,
+        start_line=chunk.start_line + 2,
+        end_line=chunk.end_line,
+    )
+    service = SearchService(registry=registry_clean, embeddings=FakeEmbeddings())
+
+    reranked, notes = await service._semantic_rerank(index, "header styles", [hit], 5)
+
+    assert len(reranked) == 1
+    assert reranked[0].match_type == "semantic"
+    assert notes == []
+
+
+async def test_semantic_rerank_skips_hits_outside_the_index(
+    settings, wp_scan, dict_reader, registry_clean
+):
+    from backend.models.analysis import SearchHit
+
+    index = await RepositoryIndexer(dict_reader.read, settings).build(wp_scan)
+    registry_clean.put(index)
+    hit = SearchHit(file_path="ghost.php", score=1.0, start_line=1, end_line=5)
+    service = SearchService(registry=registry_clean, embeddings=FakeEmbeddings())
+
+    reranked, notes = await service._semantic_rerank(index, "anything", [hit], 5)
+
+    assert reranked == []
+    assert notes == []
+
+
 async def test_search_missing_index_raises(settings):
     service = SearchService()
     with pytest.raises(LookupError):

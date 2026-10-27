@@ -9,7 +9,10 @@ from backend.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_write_lock = threading.Lock()
+# Reentrant: `execute()` holds the lock and then calls `get_connection()`,
+# which takes the same lock again to initialise the schema on first use.
+# A plain Lock would self-deadlock in any process that writes before init_db().
+_write_lock = threading.RLock()
 _initialized = False
 
 SCHEMA = """

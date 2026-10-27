@@ -4,6 +4,7 @@ import json
 
 import httpx
 import pytest
+import respx
 
 from backend.ai.analyzer import RepositoryAnalyzer
 from backend.ai.client import MockProvider, _send_with_retries
@@ -306,3 +307,70 @@ async def test_analyzer_still_raises_on_configuration_errors(
 
     with pytest.raises(AIError, match="Check AI_MODEL"):
         await analyzer.answer("acme", "client-wordpress-site", "why is the header broken")
+
+
+# -- Gemini embeddings --------------------------------------------------------
+
+GEMINI_EMBED_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/"
+    "models/gemini-embedding-001:batchEmbedContents"
+)
+
+
+def _gemini(settings):
+    from backend.ai.client import GeminiProvider
+
+    return GeminiProvider(
+        settings.model_copy(update={"ai_provider": "gemini", "ai_api_key": "test-key"})
+    )
+
+
+def test_gemini_supports_embeddings_and_defaults_model(settings):
+    provider = _gemini(settings)
+
+    assert provider.supports_embeddings() is True
+    # AI_EMBEDDING_MODEL defaults to the OpenAI model name; Gemini overrides it.
+    assert provider.embedding_model_name == "gemini-embedding-001"
+    assert provider.name == "gemini"
+
+
+def test_gemini_honours_configured_embedding_model(settings):
+    provider = _gemini(
+        settings.model_copy(update={"ai_embedding_model": "gemini-embedding-002"})
+    )
+
+    assert provider.embedding_model_name == "gemini-embedding-002"
+
+
+@respx.mock
+async def test_gemini_embed_returns_vectors(settings):
+    respx.post(GEMINI_EMBED_URL).mock(
+        return_value=httpx.Response(
+            200, json={"embeddings": [{"values": [0.1, 0.2]}, {"values": [0.3, 0.4]}]}
+        )
+    )
+
+    vectors = await _gemini(settings).embed(["alpha", "beta"])
+
+    assert vectors == [[0.1, 0.2], [0.3, 0.4]]
+
+
+@respx.mock
+async def test_gemini_embed_failure_returns_none(settings, monkeypatch):
+    from backend.ai import client
+
+    monkeypatch.setattr(client, "_RETRY_BASE_DELAY_SECONDS", 0)
+    respx.post(GEMINI_EMBED_URL).mock(
+        return_value=httpx.Response(429, json={"error": {"message": "quota exceeded"}})
+    )
+
+    assert await _gemini(settings).embed(["alpha"]) is None
+
+
+@respx.mock
+async def test_gemini_embed_rejects_mismatched_result_count(settings):
+    respx.post(GEMINI_EMBED_URL).mock(
+        return_value=httpx.Response(200, json={"embeddings": [{"values": [0.1]}]})
+    )
+
+    assert await _gemini(settings).embed(["alpha", "beta"]) is None

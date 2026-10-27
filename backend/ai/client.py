@@ -28,6 +28,8 @@ logger = get_logger(__name__)
 _RETRYABLE_STATUS = {429, 500, 502, 503, 529}
 _RETRY_ATTEMPTS = 3
 _RETRY_BASE_DELAY_SECONDS = 1.5
+# Keeps semantic ranking fast: full 3072-dim vectors would only slow cosine down.
+_GEMINI_EMBEDDING_DIMS = 768
 
 
 async def _send_with_retries(
@@ -304,6 +306,69 @@ class GeminiProvider(AIProvider):
             )
         except (KeyError, IndexError, TypeError) as exc:
             raise AIError("Unexpected response shape from the AI provider.", detail=str(exc)) from exc
+
+    # -- embeddings --------------------------------------------------------
+    def supports_embeddings(self) -> bool:
+        return True
+
+    @property
+    def embedding_model_name(self) -> str:
+        # `AI_EMBEDDING_MODEL` defaults to the OpenAI model name, which Gemini
+        # rejects - fall back to the Gemini embedding model unless overridden.
+        configured = (self.settings.ai_embedding_model or "").strip()
+        if configured.startswith("gemini-embedding"):
+            return configured
+        return "gemini-embedding-001"
+
+    async def embed(self, texts: list[str]) -> list[list[float]] | None:
+        """Embed texts with `batchEmbedContents`.
+
+        Any failure returns None so search silently keeps lexical ranking
+        instead of breaking the request.
+        """
+        if not texts:
+            return []
+        model = self.embedding_model_name
+        base = (
+            (self.settings.ai_base_url or "").strip()
+            or "https://generativelanguage.googleapis.com/v1beta"
+        )
+        url = f"{base.rstrip('/')}/models/{model}:batchEmbedContents"
+        payload = {
+            "requests": [
+                {
+                    "model": f"models/{model}",
+                    "content": {"parts": [{"text": text}]},
+                    "outputDimensionality": _GEMINI_EMBEDDING_DIMS,
+                }
+                for text in texts
+            ]
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.ai_timeout_seconds) as client:
+                response = await _send_with_retries(
+                    lambda: client.post(
+                        url, json=payload, params={"key": self.settings.ai_api_key}
+                    )
+                )
+        except (httpx.TimeoutException, httpx.HTTPError) as exc:
+            logger.warning("Gemini embeddings request failed: %s", exc)
+            return None
+        if response.status_code >= 400:
+            logger.warning(
+                "Gemini embeddings returned HTTP %s: %s",
+                response.status_code,
+                response.text[:200],
+            )
+            return None
+        try:
+            items = response.json().get("embeddings") or []
+            vectors = [[float(value) for value in item["values"]] for item in items]
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return None
+        if len(vectors) != len(texts) or not vectors:
+            return None
+        return vectors
 
 
 class MockProvider(AIProvider):

@@ -191,6 +191,7 @@ class SearchService:
                         mode_used = "semantic" if self.embeddings else "keyword"
                     else:
                         hits = self._blend(keyword_hits, reranked, limit)
+                        mode_used = "hybrid"
 
             if mode in (SearchMode.keyword.value, "keyword"):
                 mode_used = "keyword"
@@ -375,24 +376,40 @@ class SearchService:
         if not candidates:
             return [], []
         chunks_by_key = {(c.file_path, c.start_line, c.end_line): c for c in index.chunks}
-        candidate_chunks: list[Chunk] = []
+        chunks_by_file: dict[str, list[Chunk]] = {}
+        for chunk in index.chunks:
+            chunks_by_file.setdefault(chunk.file_path, []).append(chunk)
+
+        # Keyword hits carry the *matched* line range (e.g. main.css 3-13), while
+        # chunks carry their full range (main.css 1-13). Resolve each hit to the
+        # chunk that contains it, otherwise semantic reranking silently no-ops.
+        resolved: dict[tuple[str, int, int], tuple[SearchHit, Chunk]] = {}
         for hit in candidates:
             chunk = chunks_by_key.get((hit.file_path, hit.start_line, hit.end_line))
-            if chunk is not None:
-                candidate_chunks.append(chunk)
-        if not candidate_chunks:
+            if chunk is None and hit.start_line is not None:
+                for candidate in chunks_by_file.get(hit.file_path, ()):
+                    if candidate.start_line <= hit.start_line <= candidate.end_line:
+                        chunk = candidate
+                        break
+            if chunk is None:
+                continue
+            key = (chunk.file_path, chunk.start_line, chunk.end_line)
+            previous = resolved.get(key)
+            if previous is None or hit.score > previous[0].score:
+                resolved[key] = (hit, chunk)
+        pairs = list(resolved.values())
+        if not pairs:
             return [], []
 
         vectors = await embed_texts(
-            self.embeddings, [query] + [c.content[:2000] for c in candidate_chunks]
+            self.embeddings, [query] + [chunk.content[:2000] for _, chunk in pairs]
         )
         if not vectors:
             return [], ["Embeddings request failed; using lexical ranking."]
 
         query_vector = vectors[0]
-        chunk_vectors = vectors[1:]
         scored: list[tuple[SearchHit, float]] = []
-        for hit, vector in zip(candidates, chunk_vectors):
+        for (hit, _chunk), vector in zip(pairs, vectors[1:]):
             similarity = max(0.0, cosine_similarity(query_vector, vector))
             scored.append((hit, similarity))
         scored.sort(key=lambda item: -item[1])
