@@ -1,0 +1,30 @@
+# Netlify build/deploy config for the WP Dev Agent frontend.
+# https://docs.netlify.com/configure-builds/file-based-configuration/
+#
+# The backend is a separate Render service; this file only builds the Next.js
+# app and proxies nothing (the browser calls the Render API directly).
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  # Handled by @netlify/plugin-nextjs (see [[plugins]] below).
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # Must match the public Render API URL, no trailing slash.
+  # Set/override it in the Netlify UI (Site configuration -> Environment
+  # variables) rather than committing a real value here.
+  # NEXT_PUBLIC_API_URL = "https://wp-dev-agent-api.onrender.com"
+
+# NOTE: do not add manual `/*` redirects here. @netlify/plugin-nextjs owns the
+# routing table (including app-router paths and API routes); a catch-all
+# redirect to /index.html would shadow it.
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[dev]
+  base = "frontend"
+  command = "npm run dev"
+  targetPort = 3000

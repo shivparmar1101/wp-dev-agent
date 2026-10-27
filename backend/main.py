@@ -93,9 +93,16 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json" if settings.environment != "production" else None,
     )
 
+    # `FRONTEND_URL` may list several origins (comma separated) so a deployed
+    # site and a local dev server can both talk to the same API.
+    allowed_origins = [
+        origin.strip().rstrip("/")
+        for origin in settings.frontend_url.split(",")
+        if origin.strip()
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.frontend_url],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],

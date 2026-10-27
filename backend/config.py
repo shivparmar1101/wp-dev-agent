@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     session_cookie_name: str = "wpdev_session"
     session_ttl_seconds: int = 60 * 60 * 24 * 7
     oauth_state_ttl_seconds: int = 600
+    # `lax` is right when the frontend and API share one origin. When they are
+    # split across two sites (e.g. Netlify frontend + Render backend) the
+    # browser drops the cookie on cross-site API calls unless this is `none`
+    # (which also forces `Secure`).
+    session_cookie_samesite: str = "lax"
 
     # --- Scanning ----------------------------------------------------------
     ignored_paths: str = DEFAULT_IGNORED_PATHS

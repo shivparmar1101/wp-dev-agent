@@ -16,6 +16,10 @@ class ScanRequest(BaseModel):
     branch: str | None = Field(default=None, max_length=255)
 
 
+class UrlScanRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=2048)
+
+
 def _runner(request: Request) -> ScanJobRunner:
     runner: ScanJobRunner | None = getattr(request.app.state, "scan_runner", None)
     if runner is None:  # pragma: no cover - startup ordering guard
@@ -40,6 +44,22 @@ async def start_scan(
     except Exception as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail="Could not start the repository scan.") from exc
     return status
+
+
+@router.post("/url", response_model=ScanStatus)
+async def start_url_scan(
+    request: Request,
+    session: SessionDep,
+    body: UrlScanRequest,
+) -> ScanStatus:
+    """Scan any public website (same-origin crawl of what it serves)."""
+    runner = _runner(request)
+    try:
+        return runner.start_url(body.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - defensive
+        raise HTTPException(status_code=500, detail="Could not start the website scan.") from exc
 
 
 @router.get("/{owner}/{repo}/status", response_model=ScanStatus)

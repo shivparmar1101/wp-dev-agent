@@ -1,0 +1,74 @@
+# Render blueprint for the WP Dev Agent FastAPI backend.
+# https://render.com/docs/blueprint-spec
+#
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo.
+
+services:
+  - type: web
+    name: wp-dev-agent-api
+    runtime: python
+    # Repo root so `backend.main:app` resolves.
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    # Render injects $PORT; uvicorn must bind 0.0.0.0 (not 127.0.0.1).
+    # `python -m uvicorn` guarantees the repo root (where `backend/` lives) is
+    # on sys.path, unlike the console-script entry point.
+    startCommand: python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT --log-level info
+    healthCheckPath: /api/health
+    autoDeploy: true
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      # Same-origin split: this API + the Netlify frontend.
+      - key: FRONTEND_URL
+        sync: false # set to your Netlify site URL, e.g. https://your-site.netlify.app
+      - key: BACKEND_URL
+        sync: false # set to this service's public URL, e.g. https://wp-dev-agent-api.onrender.com
+
+      # --- GitHub OAuth -----------------------------------------------------
+      # Create an OAuth App at https://github.com/settings/developers and set
+      # the "Authorization callback URL" to the value of GITHUB_REDIRECT_URI
+      # below - it must match EXACTLY. Both hops happen on the API origin:
+      #
+      #   browser -> https://<netlify>/...    (UI, no auth hops)
+      #   browser -> https://<backend>/api/auth/login     -> GitHub
+      #   GitHub  -> https://<backend>/api/auth/callback  (sets the cookie,
+      #                                                   then 302 -> Netlify)
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_REDIRECT_URI
+        sync: false # e.g. https://wp-dev-agent-api.onrender.com/api/auth/callback
+
+      # --- Session cookie ---------------------------------------------------
+      # Frontend (netlify.app) and API (onrender.com) are cross-site, so the
+      # browser only sends the session cookie with SameSite=None; Secure.
+      - key: SESSION_COOKIE_SAMESITE
+        value: none
+
+      # --- Secrets ----------------------------------------------------------
+      - key: SECRET_KEY
+        generateValue: true
+
+      # --- AI (Gemini) ------------------------------------------------------
+      - key: AI_PROVIDER
+        value: gemini
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: gemini-3.8-flash
+      - key: AI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+
+      # --- Persistence ------------------------------------------------------
+      # Render's free tier has an EPHEMERAL filesystem: scans, sessions and
+      # search indexes are lost on every redeploy/restart. Mount a persistent
+      # disk (paid) and point DATABASE_URL at it for durable data.
+      # Website snapshots and the search index live beside the DB file, so they
+      # follow the same directory.
+      - key: DATABASE_URL
+        value: sqlite:///./data/wp_dev_agent.db

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.github.client import GitHubError, GitHubRateLimitError
@@ -79,6 +81,29 @@ async def get_file(
     store = ProjectStore()
     summary = store.get(owner, repo)
     resolved_ref = ref or (summary.branch if summary else None)
+
+    from backend.scanner.scan_job import WEB_OWNER
+
+    if owner == WEB_OWNER:
+        from backend.scanner.web_store import read_site_file
+
+        text = await asyncio.to_thread(read_site_file, repo, path)
+        if text is None:
+            raise HTTPException(
+                status_code=404,
+                detail="File not found in this website snapshot.",
+            )
+        from backend.scanner.file_classifier import classify
+
+        classification = classify(path, len(text.encode("utf-8", "replace")))
+        return FileContent(
+            path=path,
+            content=text,
+            size=len(text),
+            language=classification.language,
+            category=classification.category,
+            ref="site",
+        )
 
     service = FileService(client)
     try:

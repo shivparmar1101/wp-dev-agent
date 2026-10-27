@@ -25,6 +25,8 @@ export default function RepositoriesPage() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [scanning, setScanning] = useState<string | null>(null);
+  const [siteUrl, setSiteUrl] = useState("");
+  const [scanningSite, setScanningSite] = useState(false);
 
   const load = useCallback(
     async (targetPage: number) => {
@@ -75,6 +77,24 @@ export default function RepositoriesPage() {
     }
   };
 
+  const analyzeSite = async () => {
+    const raw = siteUrl.trim();
+    if (!raw) return;
+    setScanningSite(true);
+    setError(null);
+    try {
+      const status = await api.startUrlScan(raw);
+      router.push(`/workspace/${status.owner}/${status.repo}`);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not start the website scan. Please try again.",
+      );
+      setScanningSite(false);
+    }
+  };
+
   if (loading || !authorized) {
     return (
       <AppShell>
@@ -95,6 +115,37 @@ export default function RepositoriesPage() {
           Choose a repository to scan and index for AI analysis.
         </p>
       </div>
+
+      <section className="mb-6 rounded-xl border border-ink-600 bg-ink-900/60 p-4">
+        <h2 className="text-sm font-medium text-white">Scan a website</h2>
+        <p className="mt-1 text-xs text-slate-400">
+          No GitHub needed — paste any public URL. The site is crawled same-origin
+          (pages, CSS, JS it serves to browsers) and indexed for search + AI chat.
+        </p>
+        <form
+          className="mt-3 flex flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void analyzeSite();
+          }}
+        >
+          <div className="min-w-64 flex-1">
+            <Input
+              label="Website URL"
+              value={siteUrl}
+              onChange={(event) => setSiteUrl(event.target.value)}
+              placeholder="https://example.com"
+              inputMode="url"
+            />
+          </div>
+          <Button
+            type="submit"
+            disabled={scanningSite || !siteUrl.trim()}
+          >
+            {scanningSite ? "Starting…" : "Scan website"}
+          </Button>
+        </form>
+      </section>
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div className="min-w-56 flex-1">

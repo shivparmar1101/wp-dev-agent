@@ -15,19 +15,29 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _frontend_base() -> str:
+    """First configured frontend origin (FRONTEND_URL may list several)."""
+    return get_settings().frontend_url.split(",")[0].strip().rstrip("/")
+
+
 def _frontend(path: str) -> str:
-    return get_settings().frontend_url.rstrip("/") + path
+    return _frontend_base() + path
 
 
 def _set_cookie(response: Response, session_id: str) -> None:
     settings = get_settings()
+    samesite = settings.session_cookie_samesite.lower()
+    if samesite not in ("lax", "strict", "none"):
+        samesite = "lax"
+    # `None` is only accepted by browsers alongside `Secure` (HTTPS).
+    secure = settings.environment == "production" or samesite == "none"
     response.set_cookie(
         key=settings.session_cookie_name,
         value=session_id,
         max_age=settings.session_ttl_seconds,
         httponly=True,
-        samesite="lax",
-        secure=settings.environment == "production",
+        samesite=samesite,
+        secure=secure,
         path="/",
     )
 

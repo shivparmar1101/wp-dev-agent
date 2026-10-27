@@ -234,6 +234,49 @@ def test_scan_status_missing(auth_client):
     assert response.status_code == 404
 
 
+def test_url_scan_requires_session(client):
+    response = client.post("/api/scan/url", json={"url": "https://example.com"})
+    assert response.status_code == 401
+
+
+def test_url_scan_rejects_bad_url(auth_client):
+    response = auth_client.post("/api/scan/url", json={"url": "not-a-url"})
+    assert response.status_code == 422
+    assert "http" in response.json()["detail"]
+
+
+def test_url_scan_rejects_missing_body(auth_client):
+    response = auth_client.post("/api/scan/url", json={})
+    assert response.status_code == 422
+
+
+def test_url_scan_starts_for_valid_url(auth_client, monkeypatch):
+    from backend.scanner import scan_job
+
+    created: dict[str, str] = {}
+
+    class FakeRunner:
+        def start_url(self, url: str):
+            created["url"] = url
+            from backend.models.project import ScanStatus
+
+            return ScanStatus(
+                scan_id="web-scan-1", owner="web", repo="example.com", status="pending"
+            )
+
+    monkeypatch.setattr(
+        "backend.api.scan._runner", lambda request: FakeRunner()
+    )
+
+    response = auth_client.post("/api/scan/url", json={"url": "https://example.com/page"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["owner"] == "web"
+    assert payload["repo"] == "example.com"
+    assert created["url"] == "https://example.com/page"
+    assert scan_job.WEB_OWNER == "web"
+
+
 def test_error_shape_has_detail(client):
     response = client.get("/api/repositories")
     assert "detail" in response.json()

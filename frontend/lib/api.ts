@@ -113,6 +113,11 @@ export const api = {
       method: "POST",
       body: branch ? { branch } : {},
     }),
+  startUrlScan: (url: string) =>
+    request<ScanStatus>("/api/scan/url", {
+      method: "POST",
+      body: { url },
+    }),
   scanStatus: (owner: string, repo: string) =>
     request<ScanStatus>(`/api/scan/${owner}/${repo}/status`),
   scanById: (scanId: string) => request<ScanStatus>(`/api/scan/${scanId}`),
